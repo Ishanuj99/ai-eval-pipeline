@@ -4,10 +4,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models.db_models import Conversation
 from app.models.schemas import ConversationIngest
-from app.workers.tasks import run_evaluation
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -30,10 +30,14 @@ def ingest_conversation(payload: ConversationIngest, db: Session = Depends(get_d
     db.add(conv)
     db.commit()
 
-    # Dispatch async evaluation
-    run_evaluation.delay(payload.conversation_id)
-
-    return {"conversation_id": payload.conversation_id, "status": "queued"}
+    if settings.sync_evaluation:
+        from app.evaluation_runner import run_evaluation_sync
+        run_evaluation_sync(payload.conversation_id, db)
+        return {"conversation_id": payload.conversation_id, "status": "completed"}
+    else:
+        from app.workers.tasks import run_evaluation
+        run_evaluation.delay(payload.conversation_id)
+        return {"conversation_id": payload.conversation_id, "status": "queued"}
 
 
 @router.post("/batch", status_code=202)
@@ -58,8 +62,15 @@ def ingest_batch(payloads: list[ConversationIngest], db: Session = Depends(get_d
         queued.append(payload.conversation_id)
 
     db.commit()
-    for cid in queued:
-        run_evaluation.delay(cid)
+
+    if settings.sync_evaluation:
+        from app.evaluation_runner import run_evaluation_sync
+        for cid in queued:
+            run_evaluation_sync(cid, db)
+    else:
+        from app.workers.tasks import run_evaluation
+        for cid in queued:
+            run_evaluation.delay(cid)
 
     return {"queued": queued, "skipped": skipped}
 

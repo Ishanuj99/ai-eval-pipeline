@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-import anthropic
+import google.generativeai as genai
 
 from app.config import settings
 from app.evaluators.base import BaseEvaluator
@@ -37,25 +37,27 @@ Respond ONLY with valid JSON matching this schema exactly:
 
 
 class LLMJudgeEvaluator(BaseEvaluator):
-    """Uses Claude as an LLM-as-Judge to score response quality, helpfulness, and factuality."""
+    """Uses Gemini as an LLM-as-Judge to score response quality, helpfulness, and factuality."""
 
     name = "llm_judge"
 
     def __init__(self):
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        genai.configure(api_key=settings.gemini_api_key)
+        self._model = genai.GenerativeModel(settings.llm_judge_model)
 
     def evaluate(self, conversation: ConversationIngest) -> dict[str, Any]:
         conversation_text = self._format_conversation(conversation)
         prompt = _JUDGE_PROMPT.format(conversation_text=conversation_text)
 
-        message = self._client.messages.create(
-            model=settings.llm_judge_model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
+        response = self._model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=1024,
+            ),
         )
 
-        raw = message.content[0].text.strip()
-        # Strip markdown code fences if present
+        raw = response.text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

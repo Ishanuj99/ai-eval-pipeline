@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Required
-    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
 
     # Database
     database_url: str = "postgresql://evaluser:evalpass@localhost:5432/evaldb"
@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Evaluation
-    llm_judge_model: str = "claude-haiku-4-5-20251001"
+    llm_judge_model: str = "gemini-1.5-flash"
+    sync_evaluation: bool = False  # True on Vercel (no Celery workers)
     latency_threshold_ms: int = 1000
     min_annotation_agreement: float = 0.6
     auto_suggest_after_n_evals: int = 100

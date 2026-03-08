@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections import defaultdict
 
-import anthropic
+import google.generativeai as genai
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -46,11 +46,12 @@ Respond ONLY with valid JSON:
 class SuggestionService:
     def __init__(self, db: Session):
         self.db = db
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        genai.configure(api_key=settings.gemini_api_key)
+        self._model = genai.GenerativeModel(settings.llm_judge_model)
 
     def generate_suggestions(self, min_score: float = 0.7, limit: int = 50) -> int:
         """Analyze low-scored evaluations and generate suggestions. Returns count created."""
-        if not settings.anthropic_api_key:
+        if not settings.gemini_api_key:
             logger.warning("ANTHROPIC_API_KEY not set — skipping LLM suggestion generation")
             return 0
 
@@ -71,12 +72,13 @@ class SuggestionService:
             prompt = _SUGGESTION_PROMPT.format(
                 failure_summary=failure_summary, samples=samples
             )
-            message = self._client.messages.create(
-                model=settings.llm_judge_model,
-                max_tokens=2048,
-                messages=[{"role": "user", "content": prompt}],
+            response = self._model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2, max_output_tokens=2048
+                ),
             )
-            raw = message.content[0].text.strip()
+            raw = response.text.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):

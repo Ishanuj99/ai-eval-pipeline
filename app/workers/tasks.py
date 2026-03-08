@@ -52,14 +52,14 @@ def run_evaluation(self, conversation_id: str):
             llm_judge = LLMJudgeEvaluator()
             llm_result = llm_judge.safe_evaluate(conversation)
         except Exception as exc:
-            logger.warning("LLM judge failed: %s", exc)
+            logger.warning("Gemini LLM judge failed: %s", exc)
             llm_result = {"score": 0.5, "scores": {}, "issues": [], "prompt_suggestions": []}
 
         try:
             coherence_eval = CoherenceEvaluator()
             coherence_result = coherence_eval.safe_evaluate(conversation)
         except Exception as exc:
-            logger.warning("Coherence evaluator failed: %s", exc)
+            logger.warning("Gemini coherence evaluator failed: %s", exc)
             coherence_result = {"score": 0.5, "scores": {}, "issues": [], "failures": []}
 
         # --- aggregate scores ---
