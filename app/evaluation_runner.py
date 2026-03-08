@@ -4,7 +4,7 @@ Mirrors app/workers/tasks.py run_evaluation but runs in-process.
 """
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from sqlalchemy.orm import Session
 
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 _heuristic = HeuristicEvaluator()
 _tool_eval = ToolCallEvaluator()
 
-# Both LLM evaluators run in parallel and must finish within this shared budget
-_LLM_SHARED_TIMEOUT = 8
+# Single Gemini call budget — flash model typically responds in 2-4s
+_LLM_TIMEOUT = 8
 
 
 def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = False) -> str | None:
@@ -38,51 +38,34 @@ def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = Fal
         metadata=conv_row.metadata_,
     )
 
-    # Instant evaluators — always run, no LLM needed
+    # Instant evaluators — no LLM, always run
     heuristic_result = _heuristic.safe_evaluate(conversation)
     tool_result = _tool_eval.safe_evaluate(conversation)
 
-    _llm_fallback = {"score": 0.5, "scores": {}, "issues": [], "prompt_suggestions": []}
-    _coherence_fallback = {"score": 0.5, "scores": {}, "issues": [], "failures": []}
+    _llm_fallback = {"score": 0.5, "scores": {}, "coherence_score": 0.5, "issues": [], "prompt_suggestions": []}
 
     if fast_only:
         llm_result = _llm_fallback
-        coherence_result = _coherence_fallback
     else:
-        # Run both LLM evaluators IN PARALLEL with a single shared timeout.
-        # Gemini 1.5 Flash typically responds in 2-4s per call, so both
-        # complete within the 8s budget instead of timing out sequentially.
+        # Single Gemini call scores both quality AND coherence — avoids double-call latency
         try:
             from app.evaluators.llm_judge import LLMJudgeEvaluator
-            from app.evaluators.coherence import CoherenceEvaluator
             _judge = LLMJudgeEvaluator()
-            _coh = CoherenceEvaluator()
-
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                future_llm = pool.submit(_judge.safe_evaluate, conversation)
-                future_coh = pool.submit(_coh.safe_evaluate, conversation)
-
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_judge.safe_evaluate, conversation)
                 try:
-                    llm_result = future_llm.result(timeout=_LLM_SHARED_TIMEOUT) or _llm_fallback
-                except Exception as exc:
-                    logger.warning("LLM judge failed: %s", exc)
+                    llm_result = future.result(timeout=_LLM_TIMEOUT) or _llm_fallback
+                except (FuturesTimeoutError, Exception) as exc:
+                    logger.warning("LLM judge timed out or failed: %s", exc)
                     llm_result = _llm_fallback
-
-                try:
-                    coherence_result = future_coh.result(timeout=_LLM_SHARED_TIMEOUT) or _coherence_fallback
-                except Exception as exc:
-                    logger.warning("Coherence evaluator failed: %s", exc)
-                    coherence_result = _coherence_fallback
-
         except Exception as exc:
-            logger.warning("LLM evaluator init failed: %s", exc)
+            logger.warning("LLM judge init failed: %s", exc)
             llm_result = _llm_fallback
-            coherence_result = _coherence_fallback
 
     scores = {
         "response_quality": llm_result.get("score", 0.5),
         "tool_accuracy": tool_result.get("score", 1.0),
-        "coherence": coherence_result.get("score", 0.5),
+        "coherence": llm_result.get("coherence_score", 0.5),
         "heuristic": heuristic_result.get("score", 1.0),
     }
     overall = (
@@ -96,7 +79,6 @@ def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = Fal
         heuristic_result.get("issues", [])
         + tool_result.get("issues", [])
         + llm_result.get("issues", [])
-        + coherence_result.get("issues", [])
     )
     inline_suggestions = [
         {"type": "prompt", **s} for s in llm_result.get("prompt_suggestions", [])
