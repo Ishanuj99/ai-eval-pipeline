@@ -4,7 +4,7 @@ Mirrors app/workers/tasks.py run_evaluation but runs in-process.
 """
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 
 from sqlalchemy.orm import Session
 
@@ -18,19 +18,8 @@ logger = logging.getLogger(__name__)
 _heuristic = HeuristicEvaluator()
 _tool_eval = ToolCallEvaluator()
 
-# Timeout for each LLM evaluator call (seconds) — keeps Vercel within 10s budget
-_LLM_TIMEOUT = 7
-
-
-def _run_with_timeout(fn, *args, timeout=_LLM_TIMEOUT, fallback=None):
-    """Run fn(*args) in a thread; return fallback if it exceeds timeout."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(fn, *args)
-        try:
-            return future.result(timeout=timeout)
-        except (FuturesTimeoutError, Exception) as exc:
-            logger.warning("Evaluator timed out or failed: %s", exc)
-            return fallback
+# Both LLM evaluators run in parallel and must finish within this shared budget
+_LLM_SHARED_TIMEOUT = 8
 
 
 def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = False) -> str | None:
@@ -49,6 +38,7 @@ def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = Fal
         metadata=conv_row.metadata_,
     )
 
+    # Instant evaluators — always run, no LLM needed
     heuristic_result = _heuristic.safe_evaluate(conversation)
     tool_result = _tool_eval.safe_evaluate(conversation)
 
@@ -56,31 +46,37 @@ def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = Fal
     _coherence_fallback = {"score": 0.5, "scores": {}, "issues": [], "failures": []}
 
     if fast_only:
-        # Legacy fast-only path (unused when SYNC_EVALUATION=true and not fast-only)
         llm_result = _llm_fallback
         coherence_result = _coherence_fallback
     else:
-        # Try LLM evaluators with a hard timeout so Vercel stays within 10s budget
+        # Run both LLM evaluators IN PARALLEL with a single shared timeout.
+        # Gemini 1.5 Flash typically responds in 2-4s per call, so both
+        # complete within the 8s budget instead of timing out sequentially.
         try:
             from app.evaluators.llm_judge import LLMJudgeEvaluator
-            _judge = LLMJudgeEvaluator()
-            llm_result = _run_with_timeout(
-                _judge.safe_evaluate, conversation,
-                timeout=_LLM_TIMEOUT, fallback=_llm_fallback,
-            ) or _llm_fallback
-        except Exception as exc:
-            logger.warning("LLM judge init failed: %s", exc)
-            llm_result = _llm_fallback
-
-        try:
             from app.evaluators.coherence import CoherenceEvaluator
+            _judge = LLMJudgeEvaluator()
             _coh = CoherenceEvaluator()
-            coherence_result = _run_with_timeout(
-                _coh.safe_evaluate, conversation,
-                timeout=_LLM_TIMEOUT, fallback=_coherence_fallback,
-            ) or _coherence_fallback
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                future_llm = pool.submit(_judge.safe_evaluate, conversation)
+                future_coh = pool.submit(_coh.safe_evaluate, conversation)
+
+                try:
+                    llm_result = future_llm.result(timeout=_LLM_SHARED_TIMEOUT) or _llm_fallback
+                except Exception as exc:
+                    logger.warning("LLM judge failed: %s", exc)
+                    llm_result = _llm_fallback
+
+                try:
+                    coherence_result = future_coh.result(timeout=_LLM_SHARED_TIMEOUT) or _coherence_fallback
+                except Exception as exc:
+                    logger.warning("Coherence evaluator failed: %s", exc)
+                    coherence_result = _coherence_fallback
+
         except Exception as exc:
-            logger.warning("Coherence evaluator init failed: %s", exc)
+            logger.warning("LLM evaluator init failed: %s", exc)
+            llm_result = _llm_fallback
             coherence_result = _coherence_fallback
 
     scores = {
