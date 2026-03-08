@@ -2,6 +2,14 @@
 
 An automated pipeline for continuously evaluating, monitoring, and improving AI agents in production.
 
+## Hosted Demo
+
+| Service | URL |
+|---------|-----|
+| API (Vercel) | https://ai-eval-pipeline.vercel.app |
+| API Docs (Swagger) | https://ai-eval-pipeline.vercel.app/docs |
+| GitHub | https://github.com/Ishanuj99/ai-eval-pipeline |
+
 ## Architecture Overview
 
 ```
@@ -18,7 +26,7 @@ Conversations (HTTP POST)
   ┌────────────────────────────┐
   │  HeuristicEvaluator        │  Fast rule-based checks (no LLM)
   │  ToolCallEvaluator         │  Tool selection + parameter grounding
-  │  LLMJudgeEvaluator         │  Claude-as-judge for quality/helpfulness
+  │  LLMJudgeEvaluator         │  Gemini-as-judge for quality/helpfulness
   │  CoherenceEvaluator        │  Multi-turn context maintenance
   └────────────────────────────┘
        │
@@ -49,7 +57,7 @@ Conversation turns are append-only and schema-flexible (tool calls vary by agent
 **Self-Updating Flywheel:**
 1. Worker evaluates → stores scores + issues
 2. Beat job clusters low-scored conversations
-3. Claude analyzes failure patterns → generates suggestions
+3. Gemini analyzes failure patterns → generates suggestions
 4. Human reviews/applies suggestions → improves agent
 5. Meta-eval tracks if evaluator scores align with human labels
 6. Diverging evaluators get flagged for recalibration
@@ -60,15 +68,15 @@ Conversation turns are append-only and schema-flexible (tool calls vary by agent
 
 ### Prerequisites
 - Docker & Docker Compose
-- An Anthropic API key
+- A Google Gemini API key (free tier at [aistudio.google.com](https://aistudio.google.com))
 
 ### 1. Clone and configure
 
 ```bash
-git clone <repo>
+git clone https://github.com/Ishanuj99/ai-eval-pipeline
 cd ai-eval-pipeline
 cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY=your_key_here
+# Edit .env and set GEMINI_API_KEY=your_key_here
 ```
 
 ### 2. Start the stack
@@ -143,9 +151,9 @@ Each conversation gets scored across 4 dimensions, combined into an overall scor
 
 | Dimension | Weight | Evaluator |
 |-----------|--------|-----------|
-| Response Quality | 35% | LLM-as-Judge (Claude) |
+| Response Quality | 35% | LLM-as-Judge (Gemini 1.5 Flash) |
 | Tool Accuracy | 30% | ToolCallEvaluator (heuristic + grounding) |
-| Coherence | 20% | CoherenceEvaluator (Claude) |
+| Coherence | 20% | CoherenceEvaluator (Gemini 1.5 Flash) |
 | Heuristic | 15% | HeuristicEvaluator (rules) |
 
 ### Tool Call Evaluation
@@ -169,7 +177,7 @@ Each conversation gets scored across 4 dimensions, combined into an overall scor
 | 100x (100k conv/min) | Replace Redis with Kafka for ingestion; partition by `agent_version`; use read replicas |
 | Beyond | Shard PostgreSQL or migrate evaluation scores to a time-series store (TimescaleDB); cache LLM judge responses for identical turns |
 
-**LLM cost optimization**: At scale, gate LLM evaluators (Claude judge + coherence) to only run on sampled conversations (e.g., 10% random + 100% of low-heuristic-score). Heuristic and tool evaluators run on 100% at negligible cost.
+**LLM cost optimization**: At scale, gate LLM evaluators (Gemini judge + coherence) to only run on sampled conversations (e.g., 10% random + 100% of low-heuristic-score). Heuristic and tool evaluators run on 100% at negligible cost.
 
 ---
 
@@ -178,7 +186,7 @@ Each conversation gets scored across 4 dimensions, combined into an overall scor
 | Decision | Optimized For | Trade-off |
 |----------|--------------|-----------|
 | Celery + Redis | Developer velocity, simple ops | Less throughput than Kafka |
-| Claude Haiku as judge | Cost + speed | Less nuanced than Opus/Sonnet |
+| Gemini 1.5 Flash as judge | Cost + speed (free tier) | Less nuanced than paid models |
 | JSON turns in PostgreSQL | Flexibility, no migration pain | Harder to query nested fields |
 | Heuristic grounding for tool params | No LLM needed | False positives on complex extractions |
 | Synchronous DB writes in workers | Simplicity | Slower than async writes under heavy load |
