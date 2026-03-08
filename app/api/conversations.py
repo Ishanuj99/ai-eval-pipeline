@@ -32,7 +32,7 @@ def ingest_conversation(payload: ConversationIngest, db: Session = Depends(get_d
 
     if settings.sync_evaluation:
         from app.evaluation_runner import run_evaluation_sync
-        run_evaluation_sync(payload.conversation_id, db, fast_only=True)
+        run_evaluation_sync(payload.conversation_id, db, fast_only=False)
         return {"conversation_id": payload.conversation_id, "status": "completed"}
     else:
         from app.workers.tasks import run_evaluation
@@ -66,7 +66,7 @@ def ingest_batch(payloads: list[ConversationIngest], db: Session = Depends(get_d
     if settings.sync_evaluation:
         from app.evaluation_runner import run_evaluation_sync
         for cid in queued:
-            run_evaluation_sync(cid, db, fast_only=True)
+            run_evaluation_sync(cid, db, fast_only=False)
     else:
         from app.workers.tasks import run_evaluation
         for cid in queued:
