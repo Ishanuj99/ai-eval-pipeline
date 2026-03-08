@@ -8,8 +8,13 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
-import numpy as np
-from scipy.stats import pearsonr
+try:
+    import numpy as np
+    from scipy.stats import pearsonr
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
 from sqlalchemy.orm import Session
 
 from app.models.db_models import Annotation, Evaluation, EvaluatorMetric
@@ -73,8 +78,8 @@ class MetaEvalService:
 
         results = {}
         for ann_type, pairs in by_type.items():
-            if len(pairs) < 3:
-                continue  # not enough data
+            if len(pairs) < 3 or not _HAS_SCIPY:
+                continue  # not enough data or scipy not available
 
             human_scores = np.array([p[0] for p in pairs])
             auto_scores = np.array([p[1] for p in pairs])

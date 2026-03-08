@@ -14,3 +14,4 @@ venv/
 *.log
 celerybeat-schedule
 celerybeat.pid
+.vercel
