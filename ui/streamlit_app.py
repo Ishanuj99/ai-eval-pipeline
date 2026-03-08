@@ -42,7 +42,7 @@ def post(path: str, json_body: dict = None) -> dict | None:
 # ─── Sidebar Navigation ───────────────────────────────────────────────────────
 page = st.sidebar.radio(
     "Navigation",
-    ["📊 Dashboard", "🔎 Conversations", "📋 Evaluations", "💡 Suggestions", "🔬 Meta-Eval"],
+    ["📊 Dashboard", "🚀 Submit Conversation", "🔎 Conversations", "📋 Evaluations", "💡 Suggestions", "🔬 Meta-Eval"],
 )
 st.sidebar.divider()
 st.sidebar.caption(f"Backend: `{API_BASE}`")
@@ -89,6 +89,108 @@ if page == "📊 Dashboard":
                     fig2 = px.histogram(df, x="overall_score", nbins=20, title="Score Distribution")
                     fig2.update_layout(height=300, margin=dict(t=30))
                     st.plotly_chart(fig2, use_container_width=True)
+
+
+# ─── Submit Conversation ───────────────────────────────────────────────────────
+elif page == "🚀 Submit Conversation":
+    st.title("Submit a Conversation")
+    st.caption("Ingest a conversation and run the full evaluation pipeline on it.")
+
+    import json as _json
+    import uuid as _uuid
+
+    DEMO_SCENARIOS = {
+        "Scenario 1 — Tool Regression (bad date format)": {
+            "conversation_id": f"demo_tool_{_uuid.uuid4().hex[:6]}",
+            "agent_version": "v2.3.1",
+            "turns": [
+                {"turn_id": 1, "role": "user", "content": "Book me a flight to NYC next week", "timestamp": "2024-01-15T10:30:00Z"},
+                {"turn_id": 2, "role": "assistant", "content": "Sure! Let me search for available flights to NYC.",
+                 "tool_calls": [{"tool_name": "flight_search", "parameters": {"destination": "NYC", "date_range": "next-week"}, "result": {"status": "success", "flights": ["AA123", "UA456"]}, "latency_ms": 1400}],
+                 "timestamp": "2024-01-15T10:30:02Z"},
+            ],
+            "metadata": {"total_latency_ms": 1400, "mission_completed": True},
+        },
+        "Scenario 2 — Context Loss (>5 turns)": {
+            "conversation_id": f"demo_coherence_{_uuid.uuid4().hex[:6]}",
+            "agent_version": "v2.3.1",
+            "turns": [
+                {"turn_id": 1, "role": "user", "content": "I want a window seat and vegetarian meal on my flight.", "timestamp": "2024-01-15T10:00:00Z"},
+                {"turn_id": 2, "role": "assistant", "content": "Got it — window seat and vegetarian meal noted.", "timestamp": "2024-01-15T10:00:02Z"},
+                {"turn_id": 3, "role": "user", "content": "Great. Now book the 9am AA123 flight.", "timestamp": "2024-01-15T10:01:00Z"},
+                {"turn_id": 4, "role": "assistant", "content": "Booking AA123 at 9am.", "tool_calls": [{"tool_name": "book_flight", "parameters": {"flight_id": "AA123", "time": "09:00"}, "result": {"status": "success"}, "latency_ms": 300}], "timestamp": "2024-01-15T10:01:02Z"},
+                {"turn_id": 5, "role": "user", "content": "What seat and meal did you select for me?", "timestamp": "2024-01-15T10:02:00Z"},
+                {"turn_id": 6, "role": "assistant", "content": "I booked you on AA123. Would you like to specify a seat preference?", "timestamp": "2024-01-15T10:02:02Z"},
+            ],
+            "metadata": {"total_latency_ms": 900, "mission_completed": False},
+        },
+        "Custom (paste your own JSON)": None,
+    }
+
+    scenario = st.selectbox("Choose a scenario or enter custom JSON", list(DEMO_SCENARIOS.keys()))
+
+    preset = DEMO_SCENARIOS[scenario]
+    if preset is not None:
+        default_json = _json.dumps(preset, indent=2)
+    else:
+        default_json = _json.dumps({
+            "conversation_id": f"custom_{_uuid.uuid4().hex[:8]}",
+            "agent_version": "v1.0.0",
+            "turns": [
+                {"turn_id": 1, "role": "user", "content": "Hello, I need help."},
+                {"turn_id": 2, "role": "assistant", "content": "Sure, how can I assist you?"},
+            ],
+            "metadata": {"total_latency_ms": 500, "mission_completed": True},
+        }, indent=2)
+
+    payload_str = st.text_area("Conversation JSON", value=default_json, height=320)
+
+    if st.button("🚀 Submit & Evaluate", type="primary"):
+        try:
+            payload = _json.loads(payload_str)
+        except _json.JSONDecodeError as e:
+            st.error(f"Invalid JSON: {e}")
+            payload = None
+
+        if payload:
+            with st.spinner("Submitting and running evaluation..."):
+                result = post("/conversations/", payload)
+
+            if result:
+                conv_id = result.get("conversation_id")
+                status = result.get("status")
+                st.success(f"✅ Conversation `{conv_id}` submitted — status: **{status}**")
+
+                evals = get(f"/evaluations/by-conversation/{conv_id}")
+                if evals:
+                    ev = evals[0]
+                    st.subheader("Evaluation Results")
+                    m1, m2, m3, m4, m5 = st.columns(5)
+                    scores = ev.get("scores", {})
+                    m1.metric("Overall", f"{ev.get('overall_score', 0):.2%}")
+                    m2.metric("Quality", f"{scores.get('response_quality', 0):.2%}")
+                    m3.metric("Tools", f"{scores.get('tool_accuracy', 0):.2%}")
+                    m4.metric("Coherence", f"{scores.get('coherence', 0):.2%}")
+                    m5.metric("Heuristic", f"{scores.get('heuristic', 0):.2%}")
+
+                    if ev.get("issues"):
+                        st.subheader("Issues Detected")
+                        for issue in ev["issues"]:
+                            sev = issue.get("severity", "info")
+                            icon = "⚠️" if sev == "warning" else "🔴" if sev == "error" else "ℹ️"
+                            st.write(f"{icon} **{issue.get('type')}**: {issue.get('description')}")
+                    else:
+                        st.success("No issues detected.")
+
+                    if ev.get("improvement_suggestions"):
+                        st.subheader("Improvement Suggestions")
+                        for sug in ev["improvement_suggestions"]:
+                            st.info(f"**{sug.get('type', 'prompt').upper()}**: {sug.get('suggestion')} — _{sug.get('rationale', '')}_")
+
+                    with st.expander("Raw evaluation JSON"):
+                        st.json(ev)
+                else:
+                    st.info(f"Evaluation queued. Check **Conversations** page for `{conv_id}`.")
 
 
 # ─── Conversations ─────────────────────────────────────────────────────────────
