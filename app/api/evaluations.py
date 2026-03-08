@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models.db_models import Conversation, Evaluation
-from app.workers.tasks import run_evaluation
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 
@@ -59,8 +59,14 @@ def retry_evaluation(conversation_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv.status = "pending"
     db.commit()
-    run_evaluation.delay(conversation_id)
-    return {"conversation_id": conversation_id, "status": "re-queued"}
+    if settings.sync_evaluation:
+        from app.evaluation_runner import run_evaluation_sync
+        run_evaluation_sync(conversation_id, db)
+        return {"conversation_id": conversation_id, "status": "re-evaluated"}
+    else:
+        from app.workers.tasks import run_evaluation
+        run_evaluation.delay(conversation_id)
+        return {"conversation_id": conversation_id, "status": "re-queued"}
 
 
 @router.get("/stats/summary")

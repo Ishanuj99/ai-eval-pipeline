@@ -34,8 +34,11 @@ app.include_router(suggestions.router)
 @app.on_event("startup")
 def on_startup():
     logger.info("Initializing database...")
-    init_db()
-    logger.info("Database ready.")
+    try:
+        init_db()
+        logger.info("Database ready.")
+    except Exception as e:
+        logger.error("Database init failed (will retry on first request): %s", e)
 
 
 @app.get("/", tags=["health"])

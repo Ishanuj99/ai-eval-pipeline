@@ -19,7 +19,7 @@ _heuristic = HeuristicEvaluator()
 _tool_eval = ToolCallEvaluator()
 
 
-def run_evaluation_sync(conversation_id: str, db: Session) -> str | None:
+def run_evaluation_sync(conversation_id: str, db: Session, fast_only: bool = False) -> str | None:
     conv_row = db.query(Conversation).filter_by(conversation_id=conversation_id).first()
     if not conv_row:
         return None
@@ -38,19 +38,24 @@ def run_evaluation_sync(conversation_id: str, db: Session) -> str | None:
     heuristic_result = _heuristic.safe_evaluate(conversation)
     tool_result = _tool_eval.safe_evaluate(conversation)
 
-    try:
-        from app.evaluators.llm_judge import LLMJudgeEvaluator
-        llm_result = LLMJudgeEvaluator().safe_evaluate(conversation)
-    except Exception as exc:
-        logger.warning("LLM judge failed (sync): %s", exc)
+    if fast_only:
+        # Vercel mode: skip LLM calls to stay within 10s timeout
         llm_result = {"score": 0.5, "scores": {}, "issues": [], "prompt_suggestions": []}
-
-    try:
-        from app.evaluators.coherence import CoherenceEvaluator
-        coherence_result = CoherenceEvaluator().safe_evaluate(conversation)
-    except Exception as exc:
-        logger.warning("Coherence evaluator failed (sync): %s", exc)
         coherence_result = {"score": 0.5, "scores": {}, "issues": [], "failures": []}
+    else:
+        try:
+            from app.evaluators.llm_judge import LLMJudgeEvaluator
+            llm_result = LLMJudgeEvaluator().safe_evaluate(conversation)
+        except Exception as exc:
+            logger.warning("LLM judge failed (sync): %s", exc)
+            llm_result = {"score": 0.5, "scores": {}, "issues": [], "prompt_suggestions": []}
+
+        try:
+            from app.evaluators.coherence import CoherenceEvaluator
+            coherence_result = CoherenceEvaluator().safe_evaluate(conversation)
+        except Exception as exc:
+            logger.warning("Coherence evaluator failed (sync): %s", exc)
+            coherence_result = {"score": 0.5, "scores": {}, "issues": [], "failures": []}
 
     scores = {
         "response_quality": llm_result.get("score", 0.5),
