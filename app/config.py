@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Evaluation
-    llm_judge_model: str = "gemini-2.0-flash-lite"
+    llm_judge_model: str = "gemini-1.5-flash"
     sync_evaluation: bool = False  # True on Vercel (no Celery workers)
     latency_threshold_ms: int = 1000
     min_annotation_agreement: float = 0.6

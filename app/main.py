@@ -49,3 +49,22 @@ def root():
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/gemini", tags=["health"])
+def debug_gemini():
+    """Test Gemini connectivity and return the actual error if it fails."""
+    import time
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel(settings.llm_judge_model)
+        t0 = time.time()
+        response = model.generate_content(
+            "Reply with this JSON only: {\"ok\": true}",
+            generation_config=genai.types.GenerationConfig(temperature=0.0, max_output_tokens=20),
+        )
+        elapsed = round(time.time() - t0, 2)
+        return {"status": "ok", "model": settings.llm_judge_model, "elapsed_s": elapsed, "response": response.text.strip()}
+    except Exception as e:
+        return {"status": "error", "model": settings.llm_judge_model, "error": str(e), "api_key_set": bool(settings.gemini_api_key)}
