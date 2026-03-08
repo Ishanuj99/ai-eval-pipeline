@@ -8,24 +8,12 @@ from app.evaluators.base import BaseEvaluator
 from app.models.schemas import ConversationIngest
 
 _JUDGE_PROMPT = """\
-You are an AI conversation evaluator. Score the conversation below across all dimensions.
+Score this AI conversation. Reply with JSON only, no extra text.
 
-Conversation:
 {conversation_text}
 
-Score every dimension from 0.0 to 1.0. Be concise.
-
-Respond ONLY with this JSON, no extra text:
-{{
-  "response_quality": <float>,
-  "helpfulness": <float>,
-  "factuality": <float>,
-  "tone_appropriateness": <float>,
-  "context_maintenance": <float>,
-  "consistency": <float>,
-  "issues": [{{"type": "<str>", "severity": "info|warning|error", "description": "<str>"}}],
-  "prompt_suggestions": [{{"suggestion": "<str>", "rationale": "<str>", "confidence": <float>}}]
-}}"""
+JSON:
+{{"response_quality":<0-1>,"helpfulness":<0-1>,"factuality":<0-1>,"tone_appropriateness":<0-1>,"context_maintenance":<0-1>,"consistency":<0-1>,"issues":[],"prompt_suggestions":[]}}"""
 
 
 class LLMJudgeEvaluator(BaseEvaluator):
@@ -45,7 +33,7 @@ class LLMJudgeEvaluator(BaseEvaluator):
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=512,
+                max_output_tokens=256,
             ),
         )
 
