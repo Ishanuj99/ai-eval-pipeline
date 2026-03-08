@@ -338,16 +338,29 @@ elif page == "🔬 Meta-Eval":
     if metrics:
         df = pd.DataFrame(metrics)
         if not df.empty:
-            pivot = df.pivot_table(index="evaluator_name", columns="metric_name", values="value")
-            st.subheader("Evaluator Performance Matrix")
-            st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=1), use_container_width=True)
+            # Use mean aggfunc to handle duplicate rows, round for display
+            pivot = df.pivot_table(
+                index="evaluator_name", columns="metric_name", values="value", aggfunc="mean"
+            ).round(2)
 
-            st.subheader("Correlation Trend")
-            corr_df = df[df["metric_name"] == "correlation"]
+            st.subheader("Evaluator Performance Matrix")
+            # Display with simple column config instead of background_gradient (pandas 2.x compat)
+            col_cfg = {
+                col: st.column_config.ProgressColumn(col, min_value=0, max_value=1, format="%.2f")
+                for col in pivot.columns
+            }
+            st.dataframe(pivot.reset_index(), column_config=col_cfg, use_container_width=True)
+
+            st.subheader("Correlation vs Human Annotations")
+            corr_df = df[df["metric_name"] == "correlation"].drop_duplicates("evaluator_name")
             if not corr_df.empty:
-                fig = px.bar(corr_df, x="evaluator_name", y="value", color="value",
-                             color_continuous_scale="RdYlGn", range_color=[0, 1])
+                fig = px.bar(
+                    corr_df, x="evaluator_name", y="value", color="value",
+                    color_continuous_scale="RdYlGn", range_color=[0, 1],
+                    labels={"value": "Pearson Correlation", "evaluator_name": "Evaluator"},
+                )
                 fig.add_hline(y=0.6, line_dash="dash", annotation_text="Min threshold (0.6)")
+                fig.update_layout(yaxis_range=[0, 1], height=320)
                 st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No meta-eval metrics yet. Add human annotations via the API, then compute metrics.")
